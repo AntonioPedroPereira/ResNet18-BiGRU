@@ -12,7 +12,7 @@ Scikit-learn
 
 ## Dataset & Preparation
 - Step 1: Download [CASIA-B Dataset](http://www.cbsr.ia.ac.cn/english/Gait%20Databases.asp)
-- Step 2: Set Path in line 124: data_dir = r"path_to_CASIAB" # Change to CASIA-B Path
+- Step 2: Set Dataset Path in: data_dir = r"path_to_CASIAB" # Change to CASIA-B Path
 
 ## Train
 ```bash
