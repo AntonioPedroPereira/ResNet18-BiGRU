@@ -1,5 +1,4 @@
 # Part 1: Imports and Logging Setup
-
 import os
 import cv2
 import numpy as np
@@ -21,14 +20,9 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-
-
-
-
-
 # Part 2: Custom Dataset Class (GaitDataset)
 class GaitDataset(Dataset):
-    def __init__(self, sequence_dirs, labels, max_frames=30, min_valid_frames=5):  # Increased max_frames
+    def __init__(self, sequence_dirs, labels, max_frames=30, min_valid_frames=5):
         self.sequence_dirs = sequence_dirs
         self.labels = labels
         self.max_frames = max_frames
@@ -78,10 +72,6 @@ class GaitDataset(Dataset):
 
         return silhouettes, torch.tensor(self.labels[idx], dtype=torch.long)
 
-
-
-
-
 # Part 3: Model Architecture (GaitRecognitionModel)
 class GaitRecognitionModel(nn.Module):
     def __init__(self, num_classes):
@@ -93,8 +83,8 @@ class GaitRecognitionModel(nn.Module):
                                    padding=3, bias=False)
         self.cnn.fc = nn.Linear(512, 128)
         self.gru = nn.GRU(input_size=128, hidden_size=256, num_layers=2, bidirectional=True,
-                          batch_first=True)  # Hidden_size
-        self.dropout = nn.Dropout(0.4)  # Dropout
+                          batch_first=True)
+        self.dropout = nn.Dropout(0.4)
         self.fc = nn.Linear(256 * 2, num_classes)
         for m in self.cnn.modules():
             if isinstance(m, (nn.Conv2d, nn.Linear)) and m.weight.requires_grad:
@@ -115,10 +105,6 @@ class GaitRecognitionModel(nn.Module):
         logits = self.fc(temporal_features)
         return logits, spatial_features
 
-
-
-
-
 # Part 4: Dataset Scanning and Preprocessing
 def main():
     data_dir = r"path_to_CASIAB" # Change to CASIA-B Path
@@ -135,9 +121,9 @@ def main():
         if not os.path.exists(subject_dir):
             missing_subjects.append(f"{subject_id:03d}")
             print(f"Missing subject folder: {subject_dir}")
-            logging.debug(f"Missing subject folder: {subject_dir}")  # Changed to DEBUG
-    logging.debug(f"Found {len(missing_subjects)} missing subject folders: {', '.join(missing_subjects)}")
+            logging.debug(f"Missing subject folder: {subject_dir}")
 
+    logging.debug(f"Found {len(missing_subjects)} missing subject folders: {', '.join(missing_subjects)}")
     if missing_subjects:
         print(f"Found {len(missing_subjects)} missing subject folders: {', '.join(missing_subjects)}")
     if len(missing_subjects) > 10:
@@ -160,7 +146,7 @@ def main():
                     try:
                         image_files = [f for f in os.listdir(viewpoint_dir) if f.endswith('.png')]
                         valid_images = 0
-                        for img_file in image_files[:30]:  # Updated max_frames
+                        for img_file in image_files[:30]:
                             img_path = os.path.join(viewpoint_dir, img_file)
                             img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
                             if img is not None and img.mean() >= 5:
@@ -204,21 +190,18 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=6, shuffle=False, num_workers=2)
     test_loader = DataLoader(test_dataset, batch_size=6, shuffle=False, num_workers=2)
 
-
-
-
-
-   # Part 5: Training and Evaluation Loops
+    # Part 5: Training and Evaluation Loops
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     num_classes = len(set(filtered_labels))
     model = GaitRecognitionModel(num_classes=num_classes).to(device)
     optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.0003, betas=(0.9, 0.999),
                            weight_decay=5e-5)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.5)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
     criterion_ce = nn.CrossEntropyLoss()
 
-    num_epochs = 50  #Epochs
+    num_epochs = 50
+    best_val_accuracy = 0.0
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
@@ -281,6 +264,16 @@ def main():
         val_accuracy = 100. * correct / total if total > 0 else 0
         print(f"Validation Accuracy: {val_accuracy:.2f}%")
 
+        # Save the best model based on validation accuracy
+        if val_accuracy > best_val_accuracy:
+            best_val_accuracy = val_accuracy
+            torch.save(model.state_dict(), 'best_gait_model.pth')
+            print(f"Saved best model with validation accuracy: {val_accuracy:.2f}%")
+
+    # Save the final model
+    torch.save(model.state_dict(), 'final_gait_model.pth')
+    print("Saved final model as 'final_gait_model.pth'")
+
     model.eval()
     correct = 0
     total = 0
@@ -303,6 +296,124 @@ def main():
     test_accuracy = 100. * correct / total if total > 0 else 0
     print(f"Test Accuracy: {test_accuracy:.2f}%")
 
+# Part 6: Video/Camera Preprocessing and Inference
+def preprocess_video_or_camera(input_source, max_frames=30, output_dir='temp_frames'):
+    """
+    Preprocess an MP4 video or camera feed into silhouette frames.
+    input_source: Path to MP4 file or 0 for camera
+    max_frames: Maximum number of frames to process
+    output_dir: Directory to save temporary frames
+    """
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    cap = cv2.VideoCapture(input_source)
+    if not cap.isOpened():
+        logging.error(f"Could not open input source: {input_source}")
+        return None
+
+    frames = []
+    frame_count = 0
+    transform = T.Compose([
+        T.ToTensor(),
+        T.Resize((64, 44)),
+        T.Normalize(mean=[0.2], std=[0.3])
+    ])
+
+    while frame_count < max_frames:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        # Convert to grayscale and apply simple thresholding for silhouette
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        _, silhouette = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY)
+        silhouette = silhouette.astype(np.uint8)
+        # Save frame temporarily for verification
+        cv2.imwrite(os.path.join(output_dir, f'frame_{frame_count:04d}.png'), silhouette)
+        silhouette_tensor = transform(silhouette).float()
+        frames.append(silhouette_tensor)
+        frame_count += 1
+
+    cap.release()
+    if len(frames) < 5:
+        logging.warning(f"Insufficient valid frames ({len(frames)}) from {input_source}")
+        return None
+
+    # Stack frames and pad if necessary
+    frames = torch.stack(frames)
+    if len(frames) < max_frames:
+        padding = torch.zeros(max_frames - len(frames), 1, 64, 44)
+        frames = torch.cat([frames, padding], dim=0)
+    else:
+        frames = frames[:max_frames]
+
+    return frames.unsqueeze(0)  # Add batch dimension
+
+def infer_gait(model, input_tensor, device, num_classes):
+    """
+    Perform gait recognition inference on preprocessed input tensor.
+    """
+    model.eval()
+    input_tensor = input_tensor.to(device)
+    with torch.no_grad():
+        logits, _ = model(input_tensor)
+        probabilities = torch.softmax(logits, dim=1)
+        pred_class = logits.argmax(dim=1).item()
+        confidence = probabilities[0, pred_class].item()
+    return pred_class, confidence
+
+def process_and_infer(input_source, model_path='final_gait_model.pth', num_classes=124, max_frames=30):
+    """
+    Load model and perform inference on video or camera input.
+    input_source: Path to MP4 file or 0 for camera
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = GaitRecognitionModel(num_classes=num_classes).to(device)
+    try:
+        model.load_state_dict(torch.load(model_path, map_location=device))
+        print(f"Loaded model from {model_path}")
+    except Exception as e:
+        logging.error(f"Error loading model: {str(e)}")
+        return None, None
+
+    input_tensor = preprocess_video_or_camera(input_source, max_frames=max_frames)
+    if input_tensor is None:
+        print("Failed to preprocess input.")
+        return None, None
+
+    pred_class, confidence = infer_gait(model, input_tensor, device, num_classes)
+    return pred_class, confidence
 
 if __name__ == "__main__":
-    main()
+    print("Gait Recognition System")
+    print("Please select an action:")
+    print("1. Train the model")
+    print("2. Test on an MP4 video")
+    print("3. Test on camera")
+    try:
+        choice = int(input("Enter your choice (1, 2, or 3): "))
+    except ValueError:
+        print("Invalid input. Please enter 1, 2, or 3.")
+        exit(1)
+
+    if choice == 1:
+        print("Starting model training...")
+        main()  # Run the training pipeline
+    elif choice == 2:
+        video_path = r"Video_Path"  #Add video Path
+        print(f"Processing video: {video_path}")
+        pred_class, confidence = process_and_infer(video_path, model_path='final_gait_model.pth', num_classes=124)
+        if pred_class is not None:
+            print(f"MP4 Video - Predicted class: {pred_class}, Confidence: {confidence:.4f}")
+        else:
+            print("MP4 Video - Inference failed. Check gait_recognition.log for details.")
+    elif choice == 3:
+        print("Starting camera inference (press Ctrl+C to stop)...")
+        pred_class, confidence = process_and_infer(0, model_path='final_gait_model.pth', num_classes=124)
+        if pred_class is not None:
+            print(f"Camera - Predicted class: {pred_class}, Confidence: {confidence:.4f}")
+        else:
+            print("Camera - Inference failed. Check gait_recognition.log for details.")
+    else:
+        print("Invalid choice. Please enter 1, 2, or 3.")
+        exit(1)
